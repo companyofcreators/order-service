@@ -14,8 +14,8 @@ type CreateOrderRequest struct {
 	Address     string    `json:"address"`
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
-	Latitude    *float64  `json:"latitude,omitempty"`
-	Longitude   *float64  `json:"longitude,omitempty"`
+	Latitude    float64  `json:"latitude"`
+	Longitude   float64  `json:"longitude"`
 }
 
 type CreateOrderResponse struct {

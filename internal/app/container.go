@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -12,6 +13,7 @@ import (
 	domain "github.com/companyofcreators/order-service/internal/domain/order"
 	"github.com/companyofcreators/order-service/internal/infrastructure/db"
 	"github.com/companyofcreators/order-service/internal/infrastructure/kafka"
+	wsinfra "github.com/companyofcreators/order-service/internal/infrastructure/ws"
 	"github.com/companyofcreators/order-service/internal/pkg"
 )
 
@@ -28,6 +30,9 @@ type Container struct {
 
 	// Service
 	OrderService domain.OrderService
+
+	// WebSocket
+	WSHub    *wsinfra.Hub
 }
 
 func NewContainer(cfg *config.Config) (*Container, error) {
@@ -46,8 +51,11 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 	reviewRepo := db.NewReviewRepository(pool)
 	complaintRepo := db.NewComplaintRepository(pool)
 
+	// WebSocket Hub
+	wsHub := wsinfra.NewHub(pkg.Logger)
+
 	// Service
-	svc := NewOrderService(orderRepo, categoryRepo, reviewRepo, complaintRepo, prod)
+	svc := NewOrderService(orderRepo, categoryRepo, reviewRepo, complaintRepo, prod, wsHub)
 
 	return &Container{
 		cfg:           cfg,
@@ -58,6 +66,7 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 		ReviewRepo:    reviewRepo,
 		ComplaintRepo: complaintRepo,
 		OrderService:  svc,
+		WSHub:         wsHub,
 	}, nil
 }
 
@@ -85,6 +94,7 @@ type orderService struct {
 	reviewRepo    domain.ReviewRepository
 	complaintRepo domain.ComplaintRepository
 	kafkaProd     *kafka.Producer
+	wsHub         *wsinfra.Hub
 
 	createOrderHandler      *usecases.CreateOrderHandler
 	getOrderInternalHandler *usecases.GetOrderInternalHandler
@@ -105,6 +115,7 @@ func NewOrderService(
 	reviewRepo domain.ReviewRepository,
 	complaintRepo domain.ComplaintRepository,
 	kafkaProd *kafka.Producer,
+	wsHub *wsinfra.Hub,
 ) domain.OrderService {
 	return &orderService{
 		orderRepo:               orderRepo,
@@ -112,6 +123,7 @@ func NewOrderService(
 		reviewRepo:              reviewRepo,
 		complaintRepo:           complaintRepo,
 		kafkaProd:               kafkaProd,
+		wsHub:                   wsHub,
 		createOrderHandler:      usecases.NewCreateOrderHandler(orderRepo, kafkaProd),
 		getOrderInternalHandler: usecases.NewGetOrderInternalHandler(orderRepo),
 		listOrdersHandler:       usecases.NewListOrdersHandler(orderRepo),
@@ -126,8 +138,24 @@ func NewOrderService(
 	}
 }
 
+func (s *orderService) broadcastOrder(eventType string, order *domain.Order) {
+	if s.wsHub == nil {
+		return
+	}
+	data, err := json.Marshal(order)
+	if err != nil {
+		return
+	}
+	s.wsHub.Broadcast(eventType, data)
+}
+
 func (s *orderService) CreateOrder(ctx context.Context, input domain.CreateOrderInput) (*domain.Order, error) {
-	return s.createOrderHandler.Handle(ctx, input)
+	order, err := s.createOrderHandler.Handle(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	s.broadcastOrder("order.created", order)
+	return order, nil
 }
 
 func (s *orderService) GetOrder(ctx context.Context, orderID uuid.UUID) (*domain.Order, error) {
@@ -165,7 +193,12 @@ func (s *orderService) GetStatusHistory(ctx context.Context, orderID uuid.UUID) 
 }
 
 func (s *orderService) UpdateStatus(ctx context.Context, input domain.UpdateStatusInput) (*domain.Order, error) {
-	return s.updateStatusHandler.Handle(ctx, input)
+	order, err := s.updateStatusHandler.Handle(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	s.broadcastOrder("order.updated", order)
+	return order, nil
 }
 
 func (s *orderService) AssignOrder(ctx context.Context, orderID, offerID uuid.UUID) (*domain.Order, error) {
@@ -204,15 +237,27 @@ func (s *orderService) AssignOrder(ctx context.Context, orderID, offerID uuid.UU
 		})
 	}
 
+	s.broadcastOrder("order.updated", ord)
+
 	return ord, nil
 }
 
 func (s *orderService) CompleteOrder(ctx context.Context, input domain.CompleteOrderInput) (*domain.Order, error) {
-	return s.completeOrderHandler.Handle(ctx, input)
+	order, err := s.completeOrderHandler.Handle(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	s.broadcastOrder("order.updated", order)
+	return order, nil
 }
 
 func (s *orderService) CancelOrder(ctx context.Context, input domain.CancelOrderInput) (*domain.Order, error) {
-	return s.cancelOrderHandler.Handle(ctx, input)
+	order, err := s.cancelOrderHandler.Handle(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	s.broadcastOrder("order.updated", order)
+	return order, nil
 }
 
 func (s *orderService) CreateCategory(ctx context.Context, input domain.CreateCategoryInput) (*domain.Category, error) {

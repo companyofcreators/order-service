@@ -2,9 +2,9 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -37,6 +37,11 @@ func (h *Handler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	var req CreateOrderRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "некорректное тело запроса", err.Error())
+		return
+	}
+
+	if req.Latitude == 0 && req.Longitude == 0 {
+		respondError(w, http.StatusBadRequest, "latitude и longitude обязательны", "укажите координаты заказа")
 		return
 	}
 
@@ -529,9 +534,7 @@ func (h *Handler) CreateReview(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case err == domain.ErrInvalidRating:
 			respondError(w, http.StatusBadRequest, "недопустимая оценка", err.Error())
-		case err == domain.ErrOrderNotCompleted:
-			respondError(w, http.StatusConflict, "невозможно оставить отзыв", err.Error())
-		case strings.Contains(err.Error(), "невозможно оставить отзыв"):
+		case errors.Is(err, domain.ErrOrderNotCompleted):
 			respondError(w, http.StatusConflict, "невозможно оставить отзыв", err.Error())
 		default:
 			pkg.Logger.ErrorContext(r.Context(), "create review failed", "error", err.Error())
@@ -704,11 +707,17 @@ func queryParamInt(r *http.Request, key string, defaultVal int) int {
 }
 
 func respondJSON(w http.ResponseWriter, status int, data interface{}) {
+	body, err := json.Marshal(data)
+	if err != nil {
+		pkg.Logger.Error("failed to marshal response", "error", err.Error())
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":"внутренняя ошибка сервера"}`))
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(data); err != nil {
-		pkg.Logger.Error("failed to encode response", "error", err.Error())
-	}
+	w.Write(body)
 }
 
 func respondError(w http.ResponseWriter, status int, error string, message string) {

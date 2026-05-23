@@ -68,13 +68,15 @@ func (h *CancelOrderHandler) Handle(ctx context.Context, input domain.CancelOrde
 
 	// Publish event
 	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 		event := kafka.OrderCancelledEvent{
 			OrderID:     ord.ID.String(),
 			CancelledBy: input.UserID.String(),
 			Reason:      "отменён пользователем",
 		}
-		if err := h.kafkaProd.PublishOrderCancelled(context.Background(), event); err != nil {
-			pkg.Logger.ErrorContext(context.Background(), "failed to publish order.cancelled event", "error", err.Error())
+		if err := h.kafkaProd.PublishOrderCancelled(ctx, event); err != nil {
+			pkg.Logger.ErrorContext(ctx, "failed to publish order.cancelled event", "error", err.Error())
 		}
 	}()
 

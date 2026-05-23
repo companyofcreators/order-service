@@ -69,12 +69,13 @@ type ComplaintCreatedEvent struct {
 
 func NewProducer(cfg *config.Config) *Producer {
 	writer := &kafka.Writer{
-		Addr:                   kafka.TCP(cfg.KafkaBrokersList()...),
-		Balancer:               &kafka.LeastBytes{},
-		AllowAutoTopicCreation: true,
-		BatchTimeout:           10 * time.Millisecond,
-		BatchSize:              100,
-		Async:                  true,
+		Addr:         kafka.TCP(cfg.KafkaBrokersList()...),
+		Balancer:     &kafka.LeastBytes{},
+		RequiredAcks: kafka.RequireAll,
+		BatchTimeout: 10 * time.Millisecond,
+		BatchSize:    100,
+		WriteTimeout: 10 * time.Second,
+		ReadTimeout:  5 * time.Second,
 	}
 
 	return &Producer{

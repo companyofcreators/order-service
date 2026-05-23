@@ -67,6 +67,8 @@ func (h *CompleteOrderHandler) Handle(ctx context.Context, input domain.Complete
 
 	// Publish event
 	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 		masterID := ""
 		if ord.AcceptedOfferID != nil {
 			masterID = ord.AcceptedOfferID.String()
@@ -83,8 +85,8 @@ func (h *CompleteOrderHandler) Handle(ctx context.Context, input domain.Complete
 			MasterID:   masterID,
 			FinalPrice: finalPrice,
 		}
-		if err := h.kafkaProd.PublishOrderCompleted(context.Background(), event); err != nil {
-			pkg.Logger.ErrorContext(context.Background(), "failed to publish order.completed event", "error", err.Error())
+		if err := h.kafkaProd.PublishOrderCompleted(ctx, event); err != nil {
+			pkg.Logger.ErrorContext(ctx, "failed to publish order.completed event", "error", err.Error())
 		}
 	}()
 

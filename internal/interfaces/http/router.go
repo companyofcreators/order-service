@@ -1,25 +1,39 @@
 package http
 
 import (
+	"net/http"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
 	domain "github.com/companyofcreators/order-service/internal/domain/order"
+	"github.com/companyofcreators/order-service/pkg/header_auth"
 )
 
-func NewRouter(service domain.OrderService) chi.Router {
+// WebSocketUpgrader is the function type for upgrading HTTP connections to WebSocket.
+type WebSocketUpgrader func(w http.ResponseWriter, r *http.Request)
+
+func NewRouter(service domain.OrderService, signer *header_auth.HeaderSigner, wsUpgrader WebSocketUpgrader) chi.Router {
 	r := chi.NewRouter()
 
-	// Middleware
+	// Global middleware (applies to all routes including WebSocket)
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	r.Use(bodySizeLimiter(500 << 10)) // 500KB
 	r.Use(middleware.Heartbeat("/ping"))
 
-	h := NewHandler(service)
+	// WebSocket endpoint — JWT validation is done inside the handler,
+	// no HMAC header verification needed.
+	r.Get("/ws", http.HandlerFunc(wsUpgrader))
 
+	// Internal routes — protected by HMAC header verification.
 	r.Route("/internal", func(r chi.Router) {
+		r.Use(signer.VerifyMiddleware)
+
+		h := NewHandler(service)
+
 		// Health
 		r.Get("/health", h.HealthCheck)
 
@@ -67,4 +81,15 @@ func NewRouter(service domain.OrderService) chi.Router {
 	})
 
 	return r
+}
+
+// bodySizeLimiter returns middleware that wraps http.MaxBytesReader to limit
+// request body size and prevent memory exhaustion attacks.
+func bodySizeLimiter(maxBytes int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+			next.ServeHTTP(w, r)
+		})
+	}
 }

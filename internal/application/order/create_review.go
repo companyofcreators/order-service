@@ -3,6 +3,7 @@ package order
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -55,6 +56,8 @@ func (h *CreateReviewHandler) Handle(ctx context.Context, input domain.CreateRev
 
 	// Publish event
 	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 		event := kafka.ReviewCreatedEvent{
 			ReviewID:   review.ID.String(),
 			OrderID:    review.OrderID.String(),
@@ -62,8 +65,8 @@ func (h *CreateReviewHandler) Handle(ctx context.Context, input domain.CreateRev
 			ToUserID:   review.ToUserID.String(),
 			Rating:     review.Rating,
 		}
-		if err := h.kafkaProd.PublishReviewCreated(context.Background(), event); err != nil {
-			pkg.Logger.ErrorContext(context.Background(), "failed to publish review.created event", "error", err.Error())
+		if err := h.kafkaProd.PublishReviewCreated(ctx, event); err != nil {
+			pkg.Logger.ErrorContext(ctx, "failed to publish review.created event", "error", err.Error())
 		}
 	}()
 

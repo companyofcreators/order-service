@@ -102,37 +102,34 @@ func (r *ReviewRepository) ListByOrder(ctx context.Context, orderID uuid.UUID) (
 }
 
 func (r *ReviewRepository) CanReview(ctx context.Context, orderID, fromUserID uuid.UUID) (bool, error) {
-	// Check order is completed
+	// Single merged query: fetch order status, customer_id, accepted_offer_id,
+	// and check if the user already reviewed this order — all in one round-trip.
+	query := `
+		SELECT o.status, o.customer_id, o.accepted_offer_id,
+		       EXISTS(SELECT 1 FROM reviews r WHERE r.order_id = $1 AND r.from_user_id = $2) AS already_reviewed
+		FROM orders o WHERE o.id = $1
+	`
+
 	var status string
-	orderQuery := `SELECT status FROM orders WHERE id = $1`
-	err := r.pool.QueryRowContext(ctx, orderQuery, orderID).Scan(&status)
+	var customerID uuid.UUID
+	var acceptedOfferID *uuid.UUID
+	var alreadyReviewed bool
+
+	err := r.pool.QueryRowContext(ctx, query, orderID, fromUserID).Scan(
+		&status, &customerID, &acceptedOfferID, &alreadyReviewed,
+	)
 	if err != nil {
-		return false, fmt.Errorf("check order status for review: %w", err)
+		return false, fmt.Errorf("check review eligibility: %w", err)
 	}
+
 	if status != "completed" {
 		return false, nil
 	}
 
-	// Check user is participant (either customer or the master if offer accepted)
-	var customerID uuid.UUID
-	var acceptedOfferID *uuid.UUID
-	participantQuery := `SELECT customer_id, accepted_offer_id FROM orders WHERE id = $1`
-	if err := r.pool.QueryRowContext(ctx, participantQuery, orderID).Scan(&customerID, &acceptedOfferID); err != nil {
-		return false, fmt.Errorf("check participants: %w", err)
-	}
-
-	isCustomer := customerID == fromUserID
-	// We check if the user has already reviewed this order
-	var exists bool
-	existsQuery := `SELECT EXISTS(SELECT 1 FROM reviews WHERE order_id = $1 AND from_user_id = $2)`
-	if err := r.pool.QueryRowContext(ctx, existsQuery, orderID, fromUserID).Scan(&exists); err != nil {
-		return false, fmt.Errorf("check existing review: %w", err)
-	}
-	if exists {
+	if alreadyReviewed {
 		return false, nil
 	}
 
-	// User must be the customer of the order
-	// For master reviews, the master would need to be determined via accepted_offer_id
+	isCustomer := customerID == fromUserID
 	return isCustomer, nil
 }

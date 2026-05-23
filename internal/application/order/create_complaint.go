@@ -3,6 +3,7 @@ package order
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -49,6 +50,8 @@ func (h *CreateComplaintHandler) Handle(ctx context.Context, input domain.Create
 
 	// Publish event
 	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 		orderIDStr := ""
 		if complaint.OrderID != nil {
 			orderIDStr = complaint.OrderID.String()
@@ -60,8 +63,8 @@ func (h *CreateComplaintHandler) Handle(ctx context.Context, input domain.Create
 			OrderID:     orderIDStr,
 			Message:     complaint.Message,
 		}
-		if err := h.kafkaProd.PublishComplaintCreated(context.Background(), event); err != nil {
-			pkg.Logger.ErrorContext(context.Background(), "failed to publish complaint.created event", "error", err.Error())
+		if err := h.kafkaProd.PublishComplaintCreated(ctx, event); err != nil {
+			pkg.Logger.ErrorContext(ctx, "failed to publish complaint.created event", "error", err.Error())
 		}
 	}()
 

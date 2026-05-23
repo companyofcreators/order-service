@@ -3,6 +3,7 @@ package order
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -12,9 +13,8 @@ import (
 )
 
 type CreateOrderHandler struct {
-	orderRepo   domain.OrderRepository
-	historyRepo domain.OrderRepository // uses same interface for status history
-	kafkaProd   *kafka.Producer
+	orderRepo domain.OrderRepository
+	kafkaProd *kafka.Producer
 }
 
 func NewCreateOrderHandler(
@@ -70,6 +70,8 @@ func (h *CreateOrderHandler) Handle(ctx context.Context, input domain.CreateOrde
 
 	// Publish event (non-blocking)
 	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 		event := kafka.OrderCreatedEvent{
 			OrderID:    orderEntity.ID.String(),
 			CustomerID: orderEntity.CustomerID.String(),
@@ -78,8 +80,8 @@ func (h *CreateOrderHandler) Handle(ctx context.Context, input domain.CreateOrde
 			Price:      orderEntity.Price,
 			Title:      orderEntity.Title,
 		}
-		if err := h.kafkaProd.PublishOrderCreated(context.Background(), event); err != nil {
-			pkg.Logger.ErrorContext(context.Background(), "failed to publish order.created event", "error", err.Error())
+		if err := h.kafkaProd.PublishOrderCreated(ctx, event); err != nil {
+			pkg.Logger.ErrorContext(ctx, "failed to publish order.created event", "error", err.Error())
 		}
 	}()
 

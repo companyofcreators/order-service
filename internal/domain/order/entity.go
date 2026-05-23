@@ -27,8 +27,8 @@ type Order struct {
 	FinalPrice      *float64   `json:"final_price,omitempty"`
 	Currency        string     `json:"currency"`
 	Address         string     `json:"address"`
-	Latitude        *float64   `json:"latitude,omitempty"`
-	Longitude       *float64   `json:"longitude,omitempty"`
+	Latitude        float64    `json:"latitude"`
+	Longitude       float64    `json:"longitude"`
 	Title           string     `json:"title"`
 	Description     string     `json:"description"`
 	CreatedAt       time.Time  `json:"created_at"`

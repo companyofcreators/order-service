@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/ilyakaznacheev/cleanenv"
@@ -24,11 +26,16 @@ type Config struct {
 	KafkaTopicComplaintCreated string `env:"KAFKA_TOPIC_COMPLAINT_CREATED" env-default:"complaint.created"`
 	Env          string        `env:"ENV" env-default:"development"`
 	LogLevel     string        `env:"LOG_LEVEL" env-default:"info"`
-	LogFormat    string        `env:"LOG_FORMAT" env-default:"json"`
+	LogFormat     string        `env:"LOG_FORMAT" env-default:"json"`
+	HeaderHMACKey     string `env:"HEADER_HMAC_KEY" env-default:"diploma-internal-hmac-secret-key-2026"`
+	JWTPublicKeyPath  string `env:"JWT_PUBLIC_KEY_PATH" env-default:"../keys/public.pem"`
+	WSAllowedOrigin   string `env:"WS_ALLOWED_ORIGIN" env-default:""`
 }
 
 func Load() (*Config, error) {
-	_ = godotenv.Load(".env")
+	if err := godotenv.Load(".env"); err != nil {
+		slog.Warn(".env file not found, using environment variables", "error", err)
+	}
 
 	var cfg Config
 	if err := cleanenv.ReadConfig(".env", &cfg); err != nil {
@@ -42,7 +49,7 @@ func (c *Config) KafkaBrokersList() []string {
 	if c.KafkaBrokers == "" {
 		return []string{"localhost:9092"}
 	}
-	return splitAndTrim(c.KafkaBrokers)
+	return splitBrokers(c.KafkaBrokers)
 }
 
 func (c *Config) DBDSNValue() string {
@@ -61,35 +68,14 @@ func (c *Config) DBConnMaxLifetime() time.Duration {
 	return c.DBMaxLifetime
 }
 
-func splitAndTrim(s string) []string {
-	var result []string
-	current := ""
-	for _, ch := range s {
-		if ch == ',' {
-			trimmed := trimSpace(current)
-			if trimmed != "" {
-				result = append(result, trimmed)
-			}
-			current = ""
-		} else {
-			current += string(ch)
+func splitBrokers(s string) []string {
+	parts := strings.Split(s, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
 		}
 	}
-	trimmed := trimSpace(current)
-	if trimmed != "" {
-		result = append(result, trimmed)
-	}
 	return result
-}
-
-func trimSpace(s string) string {
-	start := 0
-	end := len(s)
-	for start < end && (s[start] == ' ' || s[start] == '\t') {
-		start++
-	}
-	for end > start && (s[end-1] == ' ' || s[end-1] == '\t') {
-		end--
-	}
-	return s[start:end]
 }

@@ -3,6 +3,7 @@ package order
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -69,7 +70,8 @@ func (h *UpdateStatusHandler) Handle(ctx context.Context, input domain.UpdateSta
 }
 
 func (h *UpdateStatusHandler) publishStatusEvent(ord *domain.Order, changedBy uuid.UUID) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
 	switch ord.Status {
 	case domain.StatusAssigned:

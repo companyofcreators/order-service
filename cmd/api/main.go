@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rsa"
 	"log/slog"
 	"net/http"
 	"os"
@@ -9,10 +10,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/companyofcreators/order-service/internal/app"
 	"github.com/companyofcreators/order-service/internal/config"
 	httpHandler "github.com/companyofcreators/order-service/internal/interfaces/http"
+	wshandler "github.com/companyofcreators/order-service/internal/interfaces/ws"
 	"github.com/companyofcreators/order-service/internal/pkg"
+	"github.com/companyofcreators/order-service/pkg/header_auth"
 )
 
 func main() {
@@ -38,8 +43,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Load JWT public key for WebSocket authentication
+	jwtPublicKey, err := loadJWTPublicKey(cfg.JWTPublicKeyPath)
+	if err != nil {
+		pkg.Logger.ErrorContext(context.Background(), "failed to load JWT public key", "error", err.Error())
+		os.Exit(1)
+	}
+
+	// Create WebSocket handler
+	wsHandler := wshandler.NewHandler(container.WSHub, jwtPublicKey, pkg.Logger, cfg.WSAllowedOrigin)
+
 	// Setup router
-	router := httpHandler.NewRouter(container.OrderService)
+	headerSigner := header_auth.NewHeaderSigner(cfg.HeaderHMACKey)
+	router := httpHandler.NewRouter(container.OrderService, headerSigner, wsHandler.Upgrade)
 
 	// Create HTTP server
 	srv := &http.Server{
@@ -52,7 +68,10 @@ func main() {
 
 	// Start server in a goroutine
 	go func() {
-		pkg.Logger.Info("http server listening", slog.String("addr", srv.Addr))
+		pkg.Logger.Info("http server listening",
+			slog.String("addr", srv.Addr),
+			slog.String("ws_endpoint", "ws://"+cfg.HTTPAddress+"/ws"),
+		)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			pkg.Logger.ErrorContext(context.Background(), "server failed", "error", err.Error())
 			os.Exit(1)
@@ -76,4 +95,12 @@ func main() {
 
 	// Shutdown container (DB, Kafka)
 	container.Shutdown(ctx)
+}
+
+func loadJWTPublicKey(path string) (*rsa.PublicKey, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return jwt.ParseRSAPublicKeyFromPEM(data)
 }
