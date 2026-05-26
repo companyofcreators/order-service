@@ -59,11 +59,14 @@ func (h *CreateReviewHandler) Handle(ctx context.Context, input domain.CreateRev
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		event := kafka.ReviewCreatedEvent{
-			ReviewID:   review.ID.String(),
-			OrderID:    review.OrderID.String(),
-			FromUserID: review.FromUserID.String(),
-			ToUserID:   review.ToUserID.String(),
-			Rating:     review.Rating,
+			ReviewID:       review.ID.String(),
+			OrderID:        review.OrderID.String(),
+			FromUserID:     review.FromUserID.String(),
+			ToUserID:       review.ToUserID.String(),
+			ReviewerID:     review.FromUserID.String(),
+			ReviewedUserID: review.ToUserID.String(),
+			MasterID:       review.ToUserID.String(),
+			Rating:         review.Rating,
 		}
 		if err := h.kafkaProd.PublishReviewCreated(ctx, event); err != nil {
 			pkg.Logger.ErrorContext(ctx, "failed to publish review.created event", "error", err.Error())

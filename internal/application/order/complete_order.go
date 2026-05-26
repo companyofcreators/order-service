@@ -69,10 +69,6 @@ func (h *CompleteOrderHandler) Handle(ctx context.Context, input domain.Complete
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		masterID := ""
-		if ord.AcceptedOfferID != nil {
-			masterID = ord.AcceptedOfferID.String()
-		}
 		finalPrice := 0.0
 		if ord.FinalPrice != nil {
 			finalPrice = *ord.FinalPrice
@@ -82,7 +78,7 @@ func (h *CompleteOrderHandler) Handle(ctx context.Context, input domain.Complete
 		event := kafka.OrderCompletedEvent{
 			OrderID:    ord.ID.String(),
 			CustomerID: ord.CustomerID.String(),
-			MasterID:   masterID,
+			MasterID:   "",
 			FinalPrice: finalPrice,
 		}
 		if err := h.kafkaProd.PublishOrderCompleted(ctx, event); err != nil {

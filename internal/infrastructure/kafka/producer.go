@@ -50,12 +50,15 @@ type OrderCancelledEvent struct {
 }
 
 type ReviewCreatedEvent struct {
-	ReviewID   string `json:"review_id"`
-	OrderID    string `json:"order_id"`
-	FromUserID string `json:"from_user_id"`
-	ToUserID   string `json:"to_user_id"`
-	Rating     int    `json:"rating"`
-	Timestamp  string `json:"timestamp"`
+	ReviewID       string `json:"review_id"`
+	OrderID        string `json:"order_id"`
+	FromUserID     string `json:"from_user_id"`
+	ToUserID       string `json:"to_user_id"`
+	ReviewerID     string `json:"reviewer_id,omitempty"`
+	ReviewedUserID string `json:"reviewed_user_id,omitempty"`
+	MasterID       string `json:"master_id,omitempty"`
+	Rating         int    `json:"rating"`
+	Timestamp      string `json:"timestamp"`
 }
 
 type ComplaintCreatedEvent struct {

@@ -86,8 +86,8 @@ func (h *UpdateStatusHandler) publishStatusEvent(ord *domain.Order, changedBy uu
 
 	case domain.StatusCompleted:
 		masterID := ""
-		if ord.AcceptedOfferID != nil {
-			masterID = ord.AcceptedOfferID.String()
+		if changedBy != uuid.Nil {
+			masterID = changedBy.String()
 		}
 		finalPrice := 0.0
 		if ord.FinalPrice != nil {

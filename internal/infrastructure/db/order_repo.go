@@ -191,6 +191,9 @@ func (r *OrderRepository) AddStatusHistory(ctx context.Context, h *order.OrderSt
 	if h.CreatedAt.IsZero() {
 		h.CreatedAt = now
 	}
+	if h.ID == uuid.Nil {
+		h.ID = uuid.New()
+	}
 
 	var oldStatus *string
 	if h.OldStatus != nil {
