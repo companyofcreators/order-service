@@ -201,7 +201,7 @@ func (s *orderService) UpdateStatus(ctx context.Context, input domain.UpdateStat
 	return order, nil
 }
 
-func (s *orderService) AssignOrder(ctx context.Context, orderID, offerID uuid.UUID) (*domain.Order, error) {
+func (s *orderService) AssignOrder(ctx context.Context, orderID, offerID, masterID uuid.UUID, finalPrice float64) (*domain.Order, error) {
 	ord, err := s.orderRepo.FindByID(ctx, orderID)
 	if err != nil {
 		return nil, err
@@ -216,6 +216,8 @@ func (s *orderService) AssignOrder(ctx context.Context, orderID, offerID uuid.UU
 	oldStatus := ord.Status
 	ord.Status = domain.StatusAssigned
 	ord.AcceptedOfferID = &offerID
+	ord.AssignedMasterID = &masterID
+	ord.FinalPrice = &finalPrice
 	if err := s.orderRepo.Update(ctx, ord); err != nil {
 		return nil, err
 	}
@@ -280,16 +282,26 @@ func (s *orderService) CreateReview(ctx context.Context, input domain.CreateRevi
 	return s.createReviewHandler.Handle(ctx, input)
 }
 
-func (s *orderService) ListReviewsByUser(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*domain.Review, int, error) {
+func (s *orderService) ListReviewsByUser(ctx context.Context, userID uuid.UUID, byMe bool, role string, limit, offset int) ([]*domain.Review, int, float64, error) {
 	result, err := s.listReviewsHandler.Handle(ctx, usecases.ListReviewsQuery{
 		UserID: userID,
+		ByMe:   byMe, Role: role,
 		Limit:  limit,
 		Offset: offset,
 	})
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
-	return result.Reviews, result.Total, nil
+	// Calculate average rating
+	avg := 0.0
+	if result.Total > 0 {
+		sum := 0
+		for _, r := range result.Reviews {
+			sum += r.Rating
+		}
+		avg = float64(sum) / float64(result.Total)
+	}
+	return result.Reviews, result.Total, avg, nil
 }
 
 func (s *orderService) CreateComplaint(ctx context.Context, input domain.CreateComplaintInput) (*domain.Complaint, error) {

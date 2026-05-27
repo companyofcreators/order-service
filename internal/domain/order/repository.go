@@ -7,10 +7,14 @@ import (
 )
 
 type OrderFilter struct {
-	CustomerID *uuid.UUID
-	Status     *OrderStatus
-	CategoryID *uuid.UUID
-	ActiveOnly bool // when true, filters to active statuses: created, negotiation, assigned, in_progress
+	CustomerID        *uuid.UUID
+	ExcludeCustomerID *uuid.UUID
+	Status            *OrderStatus
+	CategoryID        *uuid.UUID
+	ActiveOnly        bool
+	UnassignedOnly    bool
+	MasterFeed        bool       // master view: marketplace + assigned to me
+	ForMasterID       *uuid.UUID // master's user ID for assigned orders
 }
 
 type OrderRepository interface {
@@ -36,7 +40,7 @@ type CategoryRepository interface {
 
 type ReviewRepository interface {
 	Create(ctx context.Context, r *Review) error
-	ListByUser(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*Review, int, error)
+	ListByUser(ctx context.Context, userID uuid.UUID, byMe bool, role string, limit, offset int) ([]*Review, int, error)
 	ListByOrder(ctx context.Context, orderID uuid.UUID) ([]*Review, error)
 	CanReview(ctx context.Context, orderID, fromUserID uuid.UUID) (bool, error)
 }

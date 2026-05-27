@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 
 	"github.com/companyofcreators/order-service/internal/domain/order"
 	"github.com/companyofcreators/order-service/internal/pkg"
@@ -24,8 +25,8 @@ func NewOrderRepository(pool *sqlx.DB) *OrderRepository {
 
 func (r *OrderRepository) Create(ctx context.Context, o *order.Order) error {
 	query := `
-		INSERT INTO orders (id, customer_id, category_id, status, price, currency, address, latitude, longitude, title, description, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		INSERT INTO orders (id, customer_id, assigned_master_id, category_id, status, price, currency, address, latitude, longitude, title, description, attachment_ids, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 	`
 
 	now := time.Now()
@@ -40,9 +41,9 @@ func (r *OrderRepository) Create(ctx context.Context, o *order.Order) error {
 	}
 
 	_, err := r.pool.ExecContext(ctx, query,
-		o.ID, o.CustomerID, o.CategoryID, string(o.Status),
+		o.ID, o.CustomerID, o.AssignedMasterID, o.CategoryID, string(o.Status),
 		o.Price, o.Currency, o.Address, o.Latitude, o.Longitude,
-		o.Title, o.Description, o.CreatedAt, o.UpdatedAt,
+		o.Title, o.Description, pq.Array(o.AttachmentIDs), o.CreatedAt, o.UpdatedAt,
 	)
 	if err != nil {
 		pkg.Logger.ErrorContext(ctx, "failed to create order", "error", err.Error())
@@ -53,8 +54,8 @@ func (r *OrderRepository) Create(ctx context.Context, o *order.Order) error {
 
 func (r *OrderRepository) FindByID(ctx context.Context, id uuid.UUID) (*order.Order, error) {
 	query := `
-		SELECT id, customer_id, accepted_offer_id, category_id, status, price, final_price,
-		       currency, address, latitude, longitude, title, description,
+		SELECT id, customer_id, accepted_offer_id, assigned_master_id, category_id, status, price, final_price,
+		       currency, address, latitude, longitude, title, description, attachment_ids,
 		       created_at, updated_at, completed_at
 		FROM orders
 		WHERE id = $1
@@ -63,10 +64,10 @@ func (r *OrderRepository) FindByID(ctx context.Context, id uuid.UUID) (*order.Or
 	o := &order.Order{}
 	var statusStr string
 	err := r.pool.QueryRowContext(ctx, query, id).Scan(
-		&o.ID, &o.CustomerID, &o.AcceptedOfferID, &o.CategoryID, &statusStr,
+		&o.ID, &o.CustomerID, &o.AcceptedOfferID, &o.AssignedMasterID, &o.CategoryID, &statusStr,
 		&o.Price, &o.FinalPrice, &o.Currency, &o.Address,
 		&o.Latitude, &o.Longitude, &o.Title, &o.Description,
-		&o.CreatedAt, &o.UpdatedAt, &o.CompletedAt,
+		pq.Array(&o.AttachmentIDs), &o.CreatedAt, &o.UpdatedAt, &o.CompletedAt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -108,6 +109,24 @@ func (r *OrderRepository) List(ctx context.Context, filter order.OrderFilter, li
 		argIdx++
 	}
 
+	if filter.ExcludeCustomerID != nil {
+		conditions = append(conditions, fmt.Sprintf("customer_id != $%d", argIdx))
+		args = append(args, *filter.ExcludeCustomerID)
+		argIdx++
+	}
+
+	if filter.UnassignedOnly {
+		conditions = append(conditions, "assigned_master_id IS NULL")
+	}
+
+	if filter.MasterFeed && filter.ForMasterID != nil {
+		// Master feed: marketplace (created, unassigned, not own) OR assigned to me
+		conditions = append(conditions,
+			fmt.Sprintf("((status = 'created' AND assigned_master_id IS NULL AND customer_id != $%d) OR assigned_master_id = $%d)", argIdx, argIdx+1))
+		args = append(args, *filter.ForMasterID, *filter.ForMasterID)
+		argIdx += 2
+	}
+
 	whereClause := ""
 	if len(conditions) > 0 {
 		whereClause = "WHERE " + strings.Join(conditions, " AND ")
@@ -123,8 +142,8 @@ func (r *OrderRepository) List(ctx context.Context, filter order.OrderFilter, li
 
 	// Fetch page
 	dataQuery := fmt.Sprintf(`
-		SELECT id, customer_id, accepted_offer_id, category_id, status, price, final_price,
-		       currency, address, latitude, longitude, title, description,
+		SELECT id, customer_id, accepted_offer_id, assigned_master_id, category_id, status, price, final_price,
+		       currency, address, latitude, longitude, title, description, attachment_ids,
 		       created_at, updated_at, completed_at
 		FROM orders %s
 		ORDER BY created_at DESC
@@ -144,10 +163,10 @@ func (r *OrderRepository) List(ctx context.Context, filter order.OrderFilter, li
 		o := &order.Order{}
 		var statusStr string
 		if err := rows.Scan(
-			&o.ID, &o.CustomerID, &o.AcceptedOfferID, &o.CategoryID, &statusStr,
+			&o.ID, &o.CustomerID, &o.AcceptedOfferID, &o.AssignedMasterID, &o.CategoryID, &statusStr,
 			&o.Price, &o.FinalPrice, &o.Currency, &o.Address,
 			&o.Latitude, &o.Longitude, &o.Title, &o.Description,
-			&o.CreatedAt, &o.UpdatedAt, &o.CompletedAt,
+			pq.Array(&o.AttachmentIDs), &o.CreatedAt, &o.UpdatedAt, &o.CompletedAt,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan order: %w", err)
 		}
@@ -161,18 +180,18 @@ func (r *OrderRepository) List(ctx context.Context, filter order.OrderFilter, li
 func (r *OrderRepository) Update(ctx context.Context, o *order.Order) error {
 	query := `
 		UPDATE orders
-		SET accepted_offer_id = $2, status = $3, price = $4, final_price = $5,
-		    currency = $6, address = $7, latitude = $8, longitude = $9,
-		    title = $10, description = $11, updated_at = $12, completed_at = $13
+		SET accepted_offer_id = $2, assigned_master_id = $3, status = $4, price = $5, final_price = $6,
+		    currency = $7, address = $8, latitude = $9, longitude = $10,
+		    title = $11, description = $12, attachment_ids = $13, updated_at = $14, completed_at = $15
 		WHERE id = $1
 	`
 
 	o.UpdatedAt = time.Now()
 
 	_, err := r.pool.ExecContext(ctx, query,
-		o.ID, o.AcceptedOfferID, string(o.Status), o.Price, o.FinalPrice,
+		o.ID, o.AcceptedOfferID, o.AssignedMasterID, string(o.Status), o.Price, o.FinalPrice,
 		o.Currency, o.Address, o.Latitude, o.Longitude,
-		o.Title, o.Description, o.UpdatedAt, o.CompletedAt,
+		o.Title, o.Description, pq.Array(o.AttachmentIDs), o.UpdatedAt, o.CompletedAt,
 	)
 	if err != nil {
 		pkg.Logger.ErrorContext(ctx, "failed to update order", "order_id", o.ID.String(), "error", err.Error())

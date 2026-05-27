@@ -14,8 +14,9 @@ type CreateOrderRequest struct {
 	Address     string    `json:"address"`
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
-	Latitude    float64  `json:"latitude"`
-	Longitude   float64  `json:"longitude"`
+	Latitude      float64     `json:"latitude"`
+	Longitude     float64     `json:"longitude"`
+	AttachmentIDs []uuid.UUID `json:"attachment_ids,omitempty"`
 }
 
 type CreateOrderResponse struct {
@@ -95,6 +96,7 @@ type CreateReviewResponse struct {
 type ListReviewsResponse struct {
 	Reviews []*domain.Review `json:"reviews"`
 	Total   int              `json:"total"`
+	AvgRating float64 `json:"avg_rating"`
 	Limit   int              `json:"limit"`
 	Offset  int              `json:"offset"`
 }

@@ -21,6 +21,7 @@ type Order struct {
 	ID              uuid.UUID  `json:"id"`
 	CustomerID      uuid.UUID  `json:"customer_id"`
 	AcceptedOfferID *uuid.UUID `json:"accepted_offer_id,omitempty"`
+	AssignedMasterID *uuid.UUID `json:"assigned_master_id,omitempty"`
 	CategoryID      uuid.UUID  `json:"category_id"`
 	Status          OrderStatus `json:"status"`
 	Price           float64    `json:"price"`
@@ -31,6 +32,7 @@ type Order struct {
 	Longitude       float64    `json:"longitude"`
 	Title           string     `json:"title"`
 	Description     string     `json:"description"`
+	AttachmentIDs   []uuid.UUID `json:"attachment_ids,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
 	CompletedAt     *time.Time `json:"completed_at,omitempty"`
@@ -63,6 +65,8 @@ type Review struct {
 	OrderID    uuid.UUID `json:"order_id"`
 	FromUserID uuid.UUID `json:"from_user_id"`
 	ToUserID   uuid.UUID `json:"to_user_id"`
+	FromName   string    `json:"from_name,omitempty"`
+	FromAvatar string    `json:"from_avatar,omitempty"`
 	Rating     int       `json:"rating"`
 	Comment    string    `json:"comment"`
 	CreatedAt  time.Time `json:"created_at"`

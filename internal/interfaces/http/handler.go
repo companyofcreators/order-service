@@ -1,6 +1,9 @@
 package http
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"context"
 	"encoding/json"
 	"errors"
@@ -100,23 +103,27 @@ func (h *Handler) GetOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Customer can only view their own orders; admin/moderator can view all
-	if ord.CustomerID != userID {
-		isStaff, err := h.roleChecker.HasRole(r.Context(), userID.String(), "admin")
-		if err != nil {
-			isStaff = false
+
+	// Access: customer, assigned master, marketplace view (master), staff
+	isOwner := ord.CustomerID == userID
+	isAssignedMaster := ord.AssignedMasterID != nil && *ord.AssignedMasterID == userID
+	isMarketplace := ord.Status == domain.StatusCreated && ord.AssignedMasterID == nil && ord.CustomerID != userID
+	if isMarketplace {
+		isMaster, _ := h.roleChecker.HasRole(r.Context(), userID.String(), "master")
+		if !isMaster || r.URL.Query().Get("active_role") != "master" {
+			isMarketplace = false
 		}
+	}
+	if !isOwner && !isAssignedMaster && !isMarketplace {
+		isStaff, _ := h.roleChecker.HasRole(r.Context(), userID.String(), "admin")
 		if !isStaff {
-			isStaff, err = h.roleChecker.HasRole(r.Context(), userID.String(), "moderator")
-			if err != nil {
-				isStaff = false
-			}
+			isStaff, _ = h.roleChecker.HasRole(r.Context(), userID.String(), "moderator")
 		}
 		if !isStaff {
 			respondError(w, http.StatusForbidden, "доступ запрещён", "вы можете просматривать только свои заказы")
 			return
 		}
 	}
-
 	respondJSON(w, http.StatusOK, GetOrderResponse{Order: ord})
 }
 
@@ -224,7 +231,7 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	isStaffOrMaster, err := h.hasAnyRole(r.Context(), userID.String(), "admin", "moderator", "master")
+	isStaffOrMaster, err := h.hasAnyRole(r.Context(), userID.String(), "admin", "moderator", "master", "user")
 	if err != nil {
 		pkg.Logger.ErrorContext(r.Context(), "failed to check role for status update", "error", err.Error())
 		respondError(w, http.StatusInternalServerError, "не удалось проверить роль пользователя", err.Error())
@@ -301,6 +308,8 @@ func (h *Handler) AssignOrder(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		OfferID string `json:"offer_id"`
+		MasterID string `json:"master_id"`
+		FinalPrice float64 `json:"final_price"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "некорректное тело запроса", err.Error())
@@ -313,7 +322,13 @@ func (h *Handler) AssignOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ord, err := h.service.AssignOrder(r.Context(), orderID, offerID)
+	masterID, err := uuid.Parse(req.MasterID)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "недействительный ID мастера", err.Error())
+		return
+	}
+
+	ord, err := h.service.AssignOrder(r.Context(), orderID, offerID, masterID, req.FinalPrice)
 	if err != nil {
 		switch err {
 		case domain.ErrOrderNotFound:
@@ -626,18 +641,23 @@ func (h *Handler) ListReviews(w http.ResponseWriter, r *http.Request) {
 	limit := queryParamInt(r, "limit", 20)
 	offset := queryParamInt(r, "offset", 0)
 
-	reviews, total, err := h.service.ListReviewsByUser(r.Context(), userID, limit, offset)
+	byMe := r.URL.Query().Get("from") == "true"
+	role := r.URL.Query().Get("role")
+	reviews, total, avgRating, err := h.service.ListReviewsByUser(r.Context(), userID, byMe, role, limit, offset)
 	if err != nil {
 		pkg.Logger.ErrorContext(r.Context(), "list reviews failed", "error", err.Error())
 		respondError(w, http.StatusInternalServerError, "не удалось получить список отзывов", err.Error())
 		return
 	}
 
+	enrichReviewsWithProfiles(r.Context(), reviews)
+
 	respondJSON(w, http.StatusOK, ListReviewsResponse{
-		Reviews: reviews,
-		Total:   total,
-		Limit:   limit,
-		Offset:  offset,
+		Reviews:    reviews,
+		Total:      total,
+		AvgRating:  avgRating,
+		Limit:      limit,
+		Offset:     offset,
 	})
 }
 
@@ -815,4 +835,35 @@ func respondError(w http.ResponseWriter, status int, error string, message strin
 		Error:   error,
 		Message: message,
 	})
+}
+
+func enrichReviewsWithProfiles(ctx context.Context, reviews []*domain.Review) {
+	for _, rev := range reviews {
+		url := "http://localhost:8082/internal/users/" + rev.FromUserID.String()
+		req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+		req.Header.Set("X-User-Id", "00000000-0000-0000-0000-000000000000")
+		req.Header.Set("X-User-Email", "system@diploma")
+		req.Header.Set("X-User-Role", "admin")
+		// HMAC sign — use crypto/hmac inline
+		payload := "00000000-0000-0000-0000-000000000000|system@diploma|admin"
+		mac := hmac.New(sha256.New, []byte("diploma-internal-hmac-secret-key-2026"))
+		mac.Write([]byte(payload))
+		req.Header.Set("X-Signature", base64.StdEncoding.EncodeToString(mac.Sum(nil)))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil { continue }
+		defer resp.Body.Close()
+		if resp.StatusCode != 200 { continue }
+		var full struct {
+			Profile *struct {
+				FirstName string `json:"first_name"`
+				LastName  string `json:"last_name"`
+				AvatarURL string `json:"avatar_url"`
+			} `json:"profile,omitempty"`
+		}
+		json.NewDecoder(resp.Body).Decode(&full)
+		if full.Profile != nil {
+			rev.FromName = full.Profile.FirstName + " " + full.Profile.LastName
+			rev.FromAvatar = full.Profile.AvatarURL
+		}
+	}
 }

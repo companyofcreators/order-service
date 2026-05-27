@@ -41,21 +41,35 @@ func (r *ReviewRepository) Create(ctx context.Context, rev *order.Review) error 
 	return nil
 }
 
-func (r *ReviewRepository) ListByUser(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*order.Review, int, error) {
-	// Count all reviews for user (both given and received)
-	countQuery := `SELECT COUNT(*) FROM reviews WHERE to_user_id = $1 OR from_user_id = $1`
+func (r *ReviewRepository) ListByUser(ctx context.Context, userID uuid.UUID, byMe bool, role string, limit, offset int) ([]*order.Review, int, error) {
+	field := "r.to_user_id"
+	if byMe {
+		field = "r.from_user_id"
+	}
+
+	join := ""
+	roleFilter := ""
+	if role == "client" {
+		join = "JOIN orders o ON r.order_id = o.id"
+		roleFilter = "AND o.customer_id = $1"
+	} else if role == "master" {
+		join = "JOIN orders o ON r.order_id = o.id"
+		roleFilter = "AND o.assigned_master_id = $1"
+	}
+
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM reviews r %s WHERE %s = $1 %s", join, field, roleFilter)
 	var total int
 	if err := r.pool.QueryRowContext(ctx, countQuery, userID).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count reviews: %w", err)
 	}
 
-	query := `
-		SELECT id, order_id, from_user_id, to_user_id, rating, comment, created_at
-		FROM reviews
-		WHERE to_user_id = $1 OR from_user_id = $1
-		ORDER BY created_at DESC
+	query := fmt.Sprintf(`
+		SELECT r.id, r.order_id, r.from_user_id, r.to_user_id, r.rating, r.comment, r.created_at
+		FROM reviews r %s
+		WHERE %s = $1 %s
+		ORDER BY r.created_at DESC
 		LIMIT $2 OFFSET $3
-	`
+	`, join, field, roleFilter)
 
 	rows, err := r.pool.QueryContext(ctx, query, userID, limit, offset)
 	if err != nil {
@@ -105,18 +119,18 @@ func (r *ReviewRepository) CanReview(ctx context.Context, orderID, fromUserID uu
 	// Single merged query: fetch order status, customer_id, accepted_offer_id,
 	// and check if the user already reviewed this order — all in one round-trip.
 	query := `
-		SELECT o.status, o.customer_id, o.accepted_offer_id,
+		SELECT o.status, o.customer_id, o.assigned_master_id,
 		       EXISTS(SELECT 1 FROM reviews r WHERE r.order_id = $1 AND r.from_user_id = $2) AS already_reviewed
 		FROM orders o WHERE o.id = $1
 	`
 
 	var status string
 	var customerID uuid.UUID
-	var acceptedOfferID *uuid.UUID
+	var assignedMasterID *uuid.UUID
 	var alreadyReviewed bool
 
 	err := r.pool.QueryRowContext(ctx, query, orderID, fromUserID).Scan(
-		&status, &customerID, &acceptedOfferID, &alreadyReviewed,
+		&status, &customerID, &assignedMasterID, &alreadyReviewed,
 	)
 	if err != nil {
 		return false, fmt.Errorf("check review eligibility: %w", err)
@@ -131,5 +145,6 @@ func (r *ReviewRepository) CanReview(ctx context.Context, orderID, fromUserID uu
 	}
 
 	isCustomer := customerID == fromUserID
-	return isCustomer, nil
+	isAssignedMaster := assignedMasterID != nil && *assignedMasterID == fromUserID
+	return isCustomer || isAssignedMaster, nil
 }

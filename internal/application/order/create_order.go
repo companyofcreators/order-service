@@ -46,7 +46,8 @@ func (h *CreateOrderHandler) Handle(ctx context.Context, input domain.CreateOrde
 		Latitude:    input.Latitude,
 		Longitude:   input.Longitude,
 		Title:       input.Title,
-		Description: input.Description,
+		Description:   input.Description,
+		AttachmentIDs: input.AttachmentIDs,
 	}
 
 	if orderEntity.Currency == "" {

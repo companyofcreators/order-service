@@ -19,6 +19,8 @@ func NewListReviewsHandler(reviewRepo domain.ReviewRepository) *ListReviewsHandl
 
 type ListReviewsQuery struct {
 	UserID uuid.UUID
+	ByMe   bool
+	Role   string
 	Limit  int
 	Offset int
 }
@@ -38,7 +40,7 @@ func (h *ListReviewsHandler) Handle(ctx context.Context, query ListReviewsQuery)
 		query.Offset = 0
 	}
 
-	reviews, total, err := h.reviewRepo.ListByUser(ctx, query.UserID, query.Limit, query.Offset)
+	reviews, total, err := h.reviewRepo.ListByUser(ctx, query.UserID, query.ByMe, query.Role, query.Limit, query.Offset)
 	if err != nil {
 		return nil, fmt.Errorf("list reviews: %w", err)
 	}
